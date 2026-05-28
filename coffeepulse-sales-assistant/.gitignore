@@ -1,0 +1,12 @@
+.env
+data/*
+!data/.gitkeep
+*.db
+*.sqlite
+*.sqlite3
+__pycache__/
+*.pyc
+.venv/
+venv/
+.idea/
+.vscode/
