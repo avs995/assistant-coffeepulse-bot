@@ -4,9 +4,12 @@ from aiogram.types import Message
 
 from app.config import settings
 from app.lead_service import (
+    add_lead_note,
     create_lead,
     get_lead,
+    list_lead_notes,
     list_recent_leads,
+    list_status_history,
     search_leads,
     update_lead_score,
     update_lead_status,
@@ -87,7 +90,9 @@ def _format_score(score: str) -> str:
     return SCORE_CODE_TO_LABEL.get(score, score)
 
 
-def _format_status(status: str) -> str:
+def _format_status(status: str | None) -> str:
+    if status is None:
+        return "—"
     return STATUS_CODE_TO_LABEL.get(status, status)
 
 
@@ -145,6 +150,49 @@ def _lead_short_card(lead: dict) -> str:
     )
 
 
+def _format_notes(lead_id: int, limit: int = 5) -> str:
+    notes = list_lead_notes(lead_id, limit=limit)
+    if not notes:
+        return "—"
+    return "\n\n".join(
+        f"#{note['id']} от {note['created_at']}\n{note['note']}"
+        for note in notes
+    )
+
+
+def _format_status_history(lead_id: int, limit: int = 10) -> str:
+    history = list_status_history(lead_id, limit=limit)
+    if not history:
+        return "Истории статусов пока нет."
+    return "\n".join(
+        f"{item['created_at']}: "
+        f"{_format_status(item['old_status'])} → "
+        f"{_format_status(item['new_status'])}"
+        for item in history
+    )
+
+
+def _lead_full_card(lead: dict) -> str:
+    return (
+        f"Лид #{lead['id']}\n\n"
+        f"Компания: {lead['company']}\n"
+        f"Город: {lead.get('city') or ''}\n"
+        f"Сфера: {lead.get('niche') or ''}\n"
+        f"Источник: {lead.get('source') or ''}\n\n"
+        f"Контакты: {lead.get('contacts') or ''}\n"
+        f"Сайт: {lead.get('website') or ''}\n"
+        f"Telegram: {lead.get('telegram') or ''}\n"
+        f"VK: {lead.get('vk') or ''}\n\n"
+        f"Почему подходит:\n{lead.get('fit_reason') or ''}\n\n"
+        f"Оценка: {_format_score(lead['score'])}\n"
+        f"Статус: {_format_status(lead['status'])}\n\n"
+        f"Заметки из карточки:\n{lead.get('notes') or '—'}\n\n"
+        f"Последние заметки:\n{_format_notes(lead['id'], limit=5)}\n\n"
+        f"Создан: {lead['created_at']}\n"
+        f"Обновлен: {lead['updated_at']}"
+    )
+
+
 @router.message(Command("start"))
 async def cmd_start(message: Message) -> None:
     if not await _ensure_owner(message):
@@ -172,6 +220,9 @@ async def cmd_help(message: Message) -> None:
         "/search текст — поиск лидов\n"
         "/status ID статус — изменить статус\n"
         "/score ID оценка — изменить оценку\n"
+        "/note ID текст — добавить заметку\n"
+        "/notes ID — последние заметки по лиду\n"
+        "/history ID — история статусов\n"
         "\n"
         "Автоматическая холодная рассылка не используется."
     )
@@ -268,23 +319,7 @@ async def cmd_lead(message: Message) -> None:
         await message.answer("Лид не найден.")
         return
 
-    await message.answer(
-        f"Лид #{lead['id']}\n\n"
-        f"Компания: {lead['company']}\n"
-        f"Город: {lead.get('city') or ''}\n"
-        f"Сфера: {lead.get('niche') or ''}\n"
-        f"Источник: {lead.get('source') or ''}\n\n"
-        f"Контакты: {lead.get('contacts') or ''}\n"
-        f"Сайт: {lead.get('website') or ''}\n"
-        f"Telegram: {lead.get('telegram') or ''}\n"
-        f"VK: {lead.get('vk') or ''}\n\n"
-        f"Почему подходит:\n{lead.get('fit_reason') or ''}\n\n"
-        f"Оценка: {_format_score(lead['score'])}\n"
-        f"Статус: {_format_status(lead['status'])}\n\n"
-        f"Заметки:\n{lead.get('notes') or ''}\n\n"
-        f"Создан: {lead['created_at']}\n"
-        f"Обновлен: {lead['updated_at']}"
-    )
+    await message.answer(_lead_full_card(lead))
 
 
 @router.message(Command("search"))
@@ -350,3 +385,64 @@ async def cmd_score(message: Message) -> None:
         return
 
     await message.answer(f"Оценка лида #{lead_id} изменена: {_format_score(score)}")
+
+
+@router.message(Command("note"))
+async def cmd_note(message: Message) -> None:
+    if not await _ensure_owner(message):
+        return
+
+    lead_id, note_text = _parse_id_and_value(_extract_payload(message.text or "", "/note"))
+    if lead_id is None:
+        await message.answer("Использование: /note 12 Текст заметки")
+        return
+
+    try:
+        note = add_lead_note(lead_id, note_text)
+    except ValueError:
+        await message.answer("Текст заметки не может быть пустым.")
+        return
+
+    if note is None:
+        await message.answer("Лид не найден.")
+        return
+
+    await message.answer(
+        f"Заметка #{note['id']} добавлена к лиду #{lead_id}.\n\n{note['note']}"
+    )
+
+
+@router.message(Command("notes"))
+async def cmd_notes(message: Message) -> None:
+    if not await _ensure_owner(message):
+        return
+
+    payload = _extract_payload(message.text or "", "/notes")
+    if not payload.isdigit():
+        await message.answer("Использование: /notes 12")
+        return
+
+    lead_id = int(payload)
+    if get_lead(lead_id) is None:
+        await message.answer("Лид не найден.")
+        return
+
+    await message.answer(f"Последние заметки по лиду #{lead_id}:\n\n{_format_notes(lead_id, limit=10)}")
+
+
+@router.message(Command("history"))
+async def cmd_history(message: Message) -> None:
+    if not await _ensure_owner(message):
+        return
+
+    payload = _extract_payload(message.text or "", "/history")
+    if not payload.isdigit():
+        await message.answer("Использование: /history 12")
+        return
+
+    lead_id = int(payload)
+    if get_lead(lead_id) is None:
+        await message.answer("Лид не найден.")
+        return
+
+    await message.answer(f"История статусов лида #{lead_id}:\n\n{_format_status_history(lead_id)}")
