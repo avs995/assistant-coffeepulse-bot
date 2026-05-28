@@ -172,6 +172,87 @@ def _format_status_history(lead_id: int, limit: int = 10) -> str:
     )
 
 
+def _clean(value: object) -> str:
+    return str(value or "").strip()
+
+
+def _company(lead: dict) -> str:
+    return _clean(lead.get("company")) or "вашу компанию"
+
+
+def _city_phrase(lead: dict) -> str:
+    city = _clean(lead.get("city"))
+    return f" в {city}" if city else ""
+
+
+def _source_phrase(lead: dict) -> str:
+    source = _clean(lead.get("source"))
+    return f" через {source}" if source else ""
+
+
+def _niche_phrase(lead: dict) -> str:
+    niche = _clean(lead.get("niche")).lower()
+    if "коф" in niche:
+        return "кофейными автоматами"
+    if "вендинг" in niche:
+        return "вендингом"
+    if niche:
+        return niche
+    return "кофейными автоматами или вендингом"
+
+
+def _fit_reason_phrase(lead: dict) -> str:
+    fit_reason = _clean(lead.get("fit_reason"))
+    if not fit_reason:
+        return ""
+    return f"\n\nПочему пишу именно вам: {fit_reason}"
+
+
+def _notes_context(notes: list[dict]) -> str:
+    if not notes:
+        return ""
+
+    latest_note = _clean(notes[0].get("note"))
+    if not latest_note:
+        return ""
+
+    return f"\n\nКонтекст по последнему контакту: {latest_note}"
+
+
+def _build_first_message(lead: dict) -> str:
+    company = _company(lead)
+    city_phrase = _city_phrase(lead)
+    source_phrase = _source_phrase(lead)
+    niche_phrase = _niche_phrase(lead)
+    fit_reason_phrase = _fit_reason_phrase(lead)
+
+    return (
+        "Здравствуйте.\n\n"
+        f"Увидел {company}{city_phrase}{source_phrase}. "
+        f"Правильно понимаю, вы занимаетесь {niche_phrase}?"
+        f"{fit_reason_phrase}\n\n"
+        "Я сделал Telegram-бота CoffeePulse для владельцев кофемашин: "
+        "он показывает ежедневную выручку, примерную прибыль и предупреждает, "
+        "если по точке долго нет продаж.\n\n"
+        "Можно отправлю короткий пример отчета, чтобы вы за 1 минуту поняли, "
+        "полезно ли это для ваших точек?"
+    )
+
+
+def _build_followup_message(lead: dict, notes: list[dict]) -> str:
+    company = _company(lead)
+    notes_context = _notes_context(notes)
+
+    return (
+        "Здравствуйте.\n\n"
+        f"Возвращаюсь к вопросу по {company}."
+        f"{notes_context}\n\n"
+        "Суть CoffeePulse простая: владелец получает в Telegram ежедневный отчет "
+        "по выручке, примерной прибыли и видит точки, где давно не было продаж.\n\n"
+        "Подскажите, актуально посмотреть короткий пример такого отчета?"
+    )
+
+
 def _lead_full_card(lead: dict) -> str:
     return (
         f"Лид #{lead['id']}\n\n"
@@ -223,8 +304,10 @@ async def cmd_help(message: Message) -> None:
         "/note ID текст — добавить заметку\n"
         "/notes ID — последние заметки по лиду\n"
         "/history ID — история статусов\n"
+        "/message ID — сгенерировать первое сообщение\n"
+        "/followup ID — сгенерировать follow-up\n"
         "\n"
-        "Автоматическая холодная рассылка не используется."
+        "Автоматическая отправка сообщений лидам не используется."
     )
 
 
@@ -446,3 +529,50 @@ async def cmd_history(message: Message) -> None:
         return
 
     await message.answer(f"История статусов лида #{lead_id}:\n\n{_format_status_history(lead_id)}")
+
+
+@router.message(Command("message"))
+async def cmd_message(message: Message) -> None:
+    if not await _ensure_owner(message):
+        return
+
+    payload = _extract_payload(message.text or "", "/message")
+    if not payload.isdigit():
+        await message.answer("Использование: /message 12")
+        return
+
+    lead_id = int(payload)
+    lead = get_lead(lead_id)
+    if lead is None:
+        await message.answer("Лид не найден.")
+        return
+
+    await message.answer(
+        f"Первое сообщение для лида #{lead_id}:\n\n"
+        f"{_build_first_message(lead)}\n\n"
+        "Отправка не выполнялась. Скопируйте текст и отправьте вручную."
+    )
+
+
+@router.message(Command("followup"))
+async def cmd_followup(message: Message) -> None:
+    if not await _ensure_owner(message):
+        return
+
+    payload = _extract_payload(message.text or "", "/followup")
+    if not payload.isdigit():
+        await message.answer("Использование: /followup 12")
+        return
+
+    lead_id = int(payload)
+    lead = get_lead(lead_id)
+    if lead is None:
+        await message.answer("Лид не найден.")
+        return
+
+    notes = list_lead_notes(lead_id, limit=3)
+    await message.answer(
+        f"Follow-up для лида #{lead_id}:\n\n"
+        f"{_build_followup_message(lead, notes)}\n\n"
+        "Отправка не выполнялась. Скопируйте текст и отправьте вручную."
+    )
