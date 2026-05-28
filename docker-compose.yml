@@ -1,0 +1,10 @@
+services:
+  coffeepulse-sales-assistant:
+    container_name: coffeepulse-sales-assistant
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    command: python bot.py
