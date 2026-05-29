@@ -14,6 +14,7 @@ from app.lead_service import (
     update_lead_score,
     update_lead_status,
 )
+from app.stats_service import get_stats
 
 router = Router()
 
@@ -83,6 +84,12 @@ FIELD_MAP = {
     "status": "status",
     "заметки": "notes",
     "notes": "notes",
+}
+
+SCOPE_LABELS = {
+    "all": "за все время",
+    "week": "за последние 7 дней",
+    "month": "за последние 30 дней",
 }
 
 
@@ -253,6 +260,28 @@ def _build_followup_message(lead: dict, notes: list[dict]) -> str:
     )
 
 
+def _format_stats(stats: dict) -> str:
+    status_counts = stats["status_counts"]
+    scope_label = SCOPE_LABELS.get(stats["scope"], stats["scope"])
+
+    return (
+        f"Статистика лидов {scope_label}\n\n"
+        f"Всего лидов: {stats['total']}\n\n"
+        f"Новые: {status_counts['new']}\n"
+        f"Кому написать: {status_counts['to_write']}\n"
+        f"Написал: {status_counts['written']}\n"
+        f"Ответили: {status_counts['replied']}\n"
+        f"Демо: {status_counts['demo']}\n"
+        f"Тест: {status_counts['trial']}\n"
+        f"Отказ: {status_counts['rejected']}\n"
+        f"Клиенты: {status_counts['client']}\n\n"
+        f"Контактов сделано: {stats['contacted']}\n"
+        f"Ответов: {stats['replied']}\n"
+        f"Конверсия в ответ: {stats['reply_conversion']}%\n"
+        f"Конверсия в клиента: {stats['client_conversion']}%"
+    )
+
+
 def _lead_full_card(lead: dict) -> str:
     return (
         f"Лид #{lead['id']}\n\n"
@@ -306,6 +335,9 @@ async def cmd_help(message: Message) -> None:
         "/history ID — история статусов\n"
         "/message ID — сгенерировать первое сообщение\n"
         "/followup ID — сгенерировать follow-up\n"
+        "/stats — статистика за все время\n"
+        "/stats week — статистика за 7 дней\n"
+        "/stats month — статистика за 30 дней\n"
         "\n"
         "Автоматическая отправка сообщений лидам не используется."
     )
@@ -576,3 +608,19 @@ async def cmd_followup(message: Message) -> None:
         f"{_build_followup_message(lead, notes)}\n\n"
         "Отправка не выполнялась. Скопируйте текст и отправьте вручную."
     )
+
+
+@router.message(Command("stats"))
+async def cmd_stats(message: Message) -> None:
+    if not await _ensure_owner(message):
+        return
+
+    payload = _extract_payload(message.text or "", "/stats").lower()
+    scope = payload or "all"
+
+    if scope not in {"all", "week", "month"}:
+        await message.answer("Использование: /stats, /stats week или /stats month")
+        return
+
+    stats = get_stats(scope)
+    await message.answer(_format_stats(stats))
