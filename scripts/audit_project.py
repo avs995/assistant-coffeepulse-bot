@@ -15,6 +15,7 @@ REQUIRED_PATHS = [
     "app/handlers.py",
     "app/db.py",
     "app/lead_service.py",
+    "app/stats_service.py",
 ]
 
 FORBIDDEN_PYTHON_STRINGS = (
